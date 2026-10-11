@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "E:/reading-log-api/.venv-sqlite/Scripts/mcp-server-sqlite.exe",
+      "args": ["--db-path", "E:/reading-log-api/reading_log.db"]
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_PAT}" }
+    }
+
+  }
+}
