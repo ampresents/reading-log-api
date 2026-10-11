@@ -113,6 +113,50 @@ class TestListBooks:
             assert response.status_code == 422, params
             assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
+    def test_sorts_by_title_asc(self, client: TestClient) -> None:
+        for title in ["ぶ", "あ", "い"]:
+            create_book(client, title=title)
+
+        books = client.get("/books", params={"order": "asc"}).json()
+
+        assert [b["title"] for b in books] == ["あ", "い", "ぶ"]
+
+    def test_sorts_by_title_desc(self, client: TestClient) -> None:
+        for title in ["ぶ", "あ", "い"]:
+            create_book(client, title=title)
+
+        books = client.get("/books", params={"order": "desc"}).json()
+
+        assert [b["title"] for b in books] == ["ぶ", "い", "あ"]
+
+    def test_same_title_is_ordered_by_id(self, client: TestClient) -> None:
+        first = create_book(client, title="同じ")["id"]
+        create_book(client, title="あ")
+        second = create_book(client, title="同じ")["id"]
+
+        for order in ["asc", "desc"]:
+            books = client.get("/books", params={"order": order}).json()
+            same = [b["id"] for b in books if b["title"] == "同じ"]
+
+            assert same == [first, second], order
+
+    def test_sort_with_pagination(self, client: TestClient) -> None:
+        for title in ["え", "う", "あ", "お", "い"]:
+            create_book(client, title=title)
+
+        books = client.get(
+            "/books", params={"order": "desc", "limit": 2, "offset": 1}
+        ).json()
+
+        assert [b["title"] for b in books] == ["え", "う"]
+
+    def test_invalid_order_returns_validation_error(self, client: TestClient) -> None:
+        for order in ["ASC", "title", ""]:
+            response = client.get("/books", params={"order": order})
+
+            assert response.status_code == 422, order
+            assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
 
 def assert_book_not_found(response: Response) -> None:
     assert response.status_code == 404

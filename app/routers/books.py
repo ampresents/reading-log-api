@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlmodel import Session, select
@@ -56,8 +56,16 @@ def list_books(
     session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    order: Annotated[Literal["asc", "desc"] | None, Query()] = None,
 ) -> list[Book]:
-    statement = select(Book).order_by(Book.id).offset(offset).limit(limit)
+    # order 未指定なら id 順。指定時は書名順で、同じ書名どうしは id 順に並べる
+    if order is None:
+        order_by = [Book.id]
+    elif order == "asc":
+        order_by = [Book.title.asc(), Book.id]
+    else:
+        order_by = [Book.title.desc(), Book.id]
+    statement = select(Book).order_by(*order_by).offset(offset).limit(limit)
     return list(session.exec(statement).all())
 
 
