@@ -15,5 +15,9 @@ class Book(SQLModel, table=True):
     author: str = Field(max_length=100)
     # 任意項目。NULL は複数行で許容され、値が入った場合のみ一意になる
     isbn: str | None = Field(default=None, max_length=13, unique=True)
+    # 読書状態。値の検証は schemas 側(ReadingStatus)で行う
+    status: str = Field(
+        default="unread", max_length=20, sa_column_kwargs={"server_default": "unread"}
+    )
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

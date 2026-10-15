@@ -1,13 +1,13 @@
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from app.database import get_session
 from app.errors import AppError
-from app.models import Book
+from app.models import Book, Note
 from app.models.book import utc_now
-from app.schemas.book import BookCreate, BookRead, BookUpdate
+from app.schemas.book import BookCreate, BookRead, BookStatusUpdate, BookUpdate
 
 router = APIRouter(prefix="/books", tags=["books"])
 
@@ -69,6 +69,35 @@ def list_books(
     return list(session.exec(statement).all())
 
 
+# /{book_id} より先に定義しないと "search" が book_id として解釈される
+@router.get("/search", response_model=list[BookRead])
+def search_books(
+    session: SessionDep,
+    title: Annotated[str | None, Query(max_length=200)] = None,
+    author: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[Book]:
+    # 書名・著者とも部分一致(大文字小文字を区別しない)。両方指定したら AND 条件
+    # 空白だけの値は未指定として扱う。% や _ は文字どおりに検索する
+    title = title.strip() if title else None
+    author = author.strip() if author else None
+    if not title and not author:
+        raise AppError(
+            422,
+            "VALIDATION_ERROR",
+            "Either title or author is required",
+        )
+
+    statement = select(Book)
+    if title:
+        statement = statement.where(Book.title.icontains(title, autoescape=True))
+    if author:
+        statement = statement.where(Book.author.icontains(author, autoescape=True))
+    statement = statement.order_by(Book.id).offset(offset).limit(limit)
+    return list(session.exec(statement).all())
+
+
 @router.get("/{book_id}", response_model=BookRead)
 def get_book(book_id: int, session: SessionDep) -> Book:
     return get_book_or_404(session, book_id)
@@ -92,9 +121,27 @@ def update_book(book_id: int, payload: BookUpdate, session: SessionDep) -> Book:
     return book
 
 
+@router.put("/{book_id}/status", response_model=BookRead)
+def update_book_status(
+    book_id: int, payload: BookStatusUpdate, session: SessionDep
+) -> Book:
+    book = get_book_or_404(session, book_id)
+    if book.status == payload.status:
+        return book
+
+    book.status = payload.status
+    book.updated_at = utc_now()
+    session.add(book)
+    session.commit()
+    session.refresh(book)
+    return book
+
+
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_book(book_id: int, session: SessionDep) -> Response:
     book = get_book_or_404(session, book_id)
+    # SQLite では ON DELETE CASCADE が効かないため、感想メモを明示的に消す
+    session.exec(delete(Note).where(Note.book_id == book_id))
     session.delete(book)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

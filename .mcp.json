@@ -8,7 +8,12 @@
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/",
       "headers": { "Authorization": "Bearer ${GITHUB_PAT}" }
+    },
+    "bibliography": {
+      "command": "E:/reading-log-api/.venv/Scripts/python.exe",
+      "args": ["E:/reading-log-api/mcp_server/server.py"]
     }
+
 
   }
 }

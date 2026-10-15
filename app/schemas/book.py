@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
@@ -28,6 +28,7 @@ Author = Annotated[
     str, BeforeValidator(strip_text), Field(min_length=1, max_length=100)
 ]
 Isbn = Annotated[str | None, BeforeValidator(normalize_isbn)]
+ReadingStatus = Literal["unread", "reading", "finished"]
 
 
 class BookCreate(BaseModel):
@@ -56,5 +57,10 @@ class BookRead(BaseModel):
     title: str
     author: str
     isbn: str | None
+    status: ReadingStatus
     created_at: datetime
     updated_at: datetime
+
+
+class BookStatusUpdate(BaseModel):
+    status: ReadingStatus
