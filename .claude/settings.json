@@ -8,7 +8,10 @@
     "PreToolUse": [
       { "matcher": "Edit|Write|Bash",
         "hooks": [{ "type": "command",
-          "command": "\"E:/reading-log-api/.venv/Scripts/python.exe\" \"E:/reading-log-api/.claude/hooks/protect_files.py\"" }] }
+          "command": "\"E:/reading-log-api/.venv/Scripts/python.exe\" \"E:/reading-log-api/.claude/hooks/protect_files.py\"" }] },
+      { "matcher": "mcp__sqlite__write_query|mcp__sqlite__create_table",
+        "hooks": [{ "type": "command",
+          "command": "\"E:/reading-log-api/.venv/Scripts/python.exe\" \"E:/reading-log-api/.claude/hooks/block_db_write.py\"" }] }
     ],
     "Stop": [
       { "hooks": [{ "type": "command",
