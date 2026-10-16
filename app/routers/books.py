@@ -5,7 +5,7 @@ from sqlmodel import Session, delete, select
 
 from app.database import get_session
 from app.errors import AppError
-from app.models import Book, Note
+from app.models import Book, Note, NoteTag
 from app.models.book import utc_now
 from app.schemas.book import BookCreate, BookRead, BookStatusUpdate, BookUpdate
 
@@ -140,7 +140,10 @@ def update_book_status(
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_book(book_id: int, session: SessionDep) -> Response:
     book = get_book_or_404(session, book_id)
-    # SQLite では ON DELETE CASCADE が効かないため、感想メモを明示的に消す
+    # SQLite では ON DELETE CASCADE が効かないため、感想メモとそのタグ付けを明示的に消す
+    # タグ自体は他のメモと共有するため残す
+    note_ids = select(Note.id).where(Note.book_id == book_id)
+    session.exec(delete(NoteTag).where(NoteTag.note_id.in_(note_ids)))
     session.exec(delete(Note).where(Note.book_id == book_id))
     session.delete(book)
     session.commit()

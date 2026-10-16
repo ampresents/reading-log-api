@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from sqlmodel import Session, select
 
-from app.models import Note
+from app.models import Note, NoteTag, Tag
 
 
 def create_book(client: TestClient, **overrides: object) -> dict:
@@ -135,6 +135,156 @@ class TestListNotes:
         assert_book_not_found(client.get(notes_path(999)))
 
 
+class TestNoteTags:
+    def test_tags_default_to_empty(self, client: TestClient) -> None:
+        book = create_book(client)
+
+        assert create_note(client, book["id"])["tags"] == []
+
+    def test_creates_note_with_tags_sorted_by_name(self, client: TestClient) -> None:
+        book = create_book(client)
+
+        note = create_note(client, book["id"], tags=["名言", "1章", "伏線"])
+
+        assert note["tags"] == sorted(["名言", "1章", "伏線"])
+        assert client.get(notes_path(book["id"])).json() == [note]
+
+    def test_strips_and_dedupes_tags(self, client: TestClient) -> None:
+        book = create_book(client)
+
+        note = create_note(client, book["id"], tags=[" 名言 ", "名言", "伏線"])
+
+        assert note["tags"] == sorted(["名言", "伏線"])
+
+    def test_tags_are_case_sensitive(self, client: TestClient) -> None:
+        book = create_book(client)
+
+        assert create_note(client, book["id"], tags=["SF", "sf"])["tags"] == [
+            "SF",
+            "sf",
+        ]
+
+    def test_same_tag_is_shared_between_notes(
+        self, client: TestClient, session: Session
+    ) -> None:
+        book = create_book(client)
+        create_note(client, book["id"], tags=["名言"])
+        create_note(client, book["id"], tags=["名言", "伏線"])
+
+        names = [tag.name for tag in session.exec(select(Tag)).all()]
+        assert sorted(names) == sorted(["名言", "伏線"])
+        # 既存タグと新規タグが混ざっても、それぞれ正しく紐づくこと
+        notes = client.get(notes_path(book["id"]), params={"tag": "伏線"}).json()
+        assert [n["tags"] for n in notes] == [sorted(["名言", "伏線"])]
+
+    def test_boundary_values_are_accepted(self, client: TestClient) -> None:
+        book = create_book(client)
+        long_name = "x" * 50
+        tags = [f"tag{i}" for i in range(9)] + [long_name]
+
+        assert len(create_note(client, book["id"], tags=tags)["tags"]) == 10
+        notes = client.get(notes_path(book["id"]), params={"tag": long_name}).json()
+        assert len(notes) == 1
+
+    def test_max_tags_is_counted_after_dedupe(self, client: TestClient) -> None:
+        book = create_book(client)
+        tags = [f"tag{i}" for i in range(10)] + ["tag0"]
+
+        assert len(create_note(client, book["id"], tags=tags)["tags"]) == 10
+
+    def test_invalid_tags_return_validation_error(
+        self, client: TestClient, session: Session
+    ) -> None:
+        book = create_book(client)
+        cases = [
+            {"tags": None},
+            {"tags": "名言"},  # 配列でない
+            {"tags": [""]},
+            {"tags": ["   "]},  # 空白のみ
+            {"tags": ["名言", ""]},  # 正しいタグと混在
+            {"tags": [None]},
+            {"tags": [1]},
+            {"tags": ["x" * 51]},  # 最大長超過
+            {"tags": [f"tag{i}" for i in range(11)]},  # 個数超過
+        ]
+        for case in cases:
+            response = client.post(
+                notes_path(book["id"]), json={"content": "x", **case}
+            )
+            assert_validation_error(response, case)
+        assert client.get(notes_path(book["id"])).json() == []
+        assert session.exec(select(Tag)).all() == []
+
+    def test_filters_by_tag(self, client: TestClient) -> None:
+        book = create_book(client)
+        first = create_note(client, book["id"], tags=["名言", "伏線"])
+        create_note(client, book["id"], tags=["伏線"])
+        create_note(client, book["id"])
+        third = create_note(client, book["id"], tags=["名言"])
+
+        notes = client.get(notes_path(book["id"]), params={"tag": "名言"}).json()
+
+        # 絞り込んでもタグは全件返す
+        assert notes == [first, third]
+
+    def test_filter_strips_tag(self, client: TestClient) -> None:
+        book = create_book(client)
+        note = create_note(client, book["id"], tags=["名言"])
+
+        notes = client.get(notes_path(book["id"]), params={"tag": " 名言 "}).json()
+
+        assert notes == [note]
+
+    def test_filter_is_exact_and_case_sensitive(self, client: TestClient) -> None:
+        book = create_book(client)
+        create_note(client, book["id"], tags=["SF小説"])
+        upper = create_note(client, book["id"], tags=["SF"])
+
+        for tag, expected in [("SF", [upper]), ("sf", []), ("小説", [])]:
+            notes = client.get(notes_path(book["id"]), params={"tag": tag}).json()
+            assert notes == expected, tag
+
+    def test_blank_tag_filter_is_ignored(self, client: TestClient) -> None:
+        book = create_book(client)
+        notes = [create_note(client, book["id"]), create_note(client, book["id"])]
+
+        for tag in ["", "   "]:
+            response = client.get(notes_path(book["id"]), params={"tag": tag})
+            assert response.json() == notes, repr(tag)
+
+    def test_filter_returns_only_notes_of_the_book(self, client: TestClient) -> None:
+        book = create_book(client)
+        other = create_book(client, title="こころ")
+        note = create_note(client, book["id"], tags=["名言"])
+        create_note(client, other["id"], tags=["名言"])
+
+        notes = client.get(notes_path(book["id"]), params={"tag": "名言"}).json()
+
+        assert notes == [note]
+
+    def test_filter_with_pagination(self, client: TestClient) -> None:
+        book = create_book(client)
+        ids = []
+        for i in range(5):
+            create_note(client, book["id"])  # タグなしは対象外
+            ids.append(create_note(client, book["id"], tags=["名言"])["id"])
+
+        notes = client.get(
+            notes_path(book["id"]), params={"tag": "名言", "limit": 2, "offset": 1}
+        ).json()
+
+        assert [n["id"] for n in notes] == ids[1:3]
+
+    def test_too_long_tag_filter_returns_validation_error(
+        self, client: TestClient
+    ) -> None:
+        book = create_book(client)
+
+        response = client.get(notes_path(book["id"]), params={"tag": "x" * 51})
+
+        assert_validation_error(response)
+
+
 def test_deleting_book_deletes_its_notes(client: TestClient, session: Session) -> None:
     book = create_book(client)
     other = create_book(client, title="こころ")
@@ -146,3 +296,20 @@ def test_deleting_book_deletes_its_notes(client: TestClient, session: Session) -
     # 削除した本のメモだけが DB から消え、他の本のメモは残ること
     notes = session.exec(select(Note)).all()
     assert [note.id for note in notes] == [other_note["id"]]
+
+
+def test_deleting_book_deletes_its_note_tags(
+    client: TestClient, session: Session
+) -> None:
+    book = create_book(client)
+    other = create_book(client, title="こころ")
+    create_note(client, book["id"], tags=["名言", "伏線"])
+    other_note = create_note(client, other["id"], tags=["名言"])
+
+    assert client.delete(f"/books/{book['id']}").status_code == 204
+
+    # 削除した本のメモのタグ付けだけが消え、タグ自体は残ること
+    links = session.exec(select(NoteTag)).all()
+    assert [link.note_id for link in links] == [other_note["id"]]
+    names = [tag.name for tag in session.exec(select(Tag)).all()]
+    assert sorted(names) == sorted(["名言", "伏線"])
